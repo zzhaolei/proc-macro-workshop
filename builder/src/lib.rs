@@ -46,8 +46,19 @@ fn impl_builder(input: &DeriveInput) -> TokenStream {
             }
         }
 
+        use std::error::Error;
+
         impl #builder_name {
             #(#field_method)*
+
+            pub fn build(&mut self) -> Result<#struct_name, Box<dyn Error>> {
+                if #(self.#field_ident.is_none()) || * {
+                    return Err(Box::<dyn Error>::from("the fields has been explicitly set"))
+                }
+                Ok(#struct_name {
+                    #(#field_ident: self.#field_ident.clone().unwrap()),*
+                })
+            }
         }
     )
     .into()
