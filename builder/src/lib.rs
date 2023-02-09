@@ -22,6 +22,17 @@ fn impl_builder(input: &DeriveInput) -> TokenStream {
         .collect::<Vec<&Option<Ident>>>();
     let field_type = fields.iter().map(|field| &field.ty).collect::<Vec<&Type>>();
 
+    let field_method = fields.iter().map(|field| {
+        let ident = &field.ident;
+        let ident_type = &field.ty;
+        quote!(
+            fn #ident(&mut self, #ident: #ident_type) -> &mut Self {
+                self.#ident = Some(#ident);
+                self
+            }
+        )
+    });
+
     quote!(
         pub struct #builder_name {
             #(#field_ident: Option<#field_type>),*
@@ -33,6 +44,10 @@ fn impl_builder(input: &DeriveInput) -> TokenStream {
                     #(#field_ident: None,)*
                 }
             }
+        }
+
+        impl #builder_name {
+            #(#field_method)*
         }
     )
     .into()
