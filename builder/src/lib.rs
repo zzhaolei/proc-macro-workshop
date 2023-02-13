@@ -1,19 +1,24 @@
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    parse_macro_input, AngleBracketedGenericArguments, Data, DataStruct, DeriveInput, Field,
-    Fields, GenericArgument, Ident, Lit, Meta, MetaList, MetaNameValue, NestedMeta, Path,
-    PathArguments, Type, TypePath,
+    parse_macro_input, spanned::Spanned, AngleBracketedGenericArguments, Data, DataStruct,
+    DeriveInput, Field, Fields, GenericArgument, Ident, Lit, Meta, MetaList, MetaNameValue,
+    NestedMeta, Path, PathArguments, Type, TypePath,
 };
 
 #[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    impl_builder(&input)
+    match impl_builder(&input) {
+        Ok(v) => v,
+        Err(e) => e.into(),
+    }
 }
 
-fn impl_builder(input: &DeriveInput) -> TokenStream {
+type ResultTokenStream<T> = Result<T, TokenStream2>;
+
+fn impl_builder(input: &DeriveInput) -> ResultTokenStream<TokenStream> {
     let struct_name = &input.ident;
     let builder_name = Ident::new(&format!("{}Builder", struct_name), struct_name.span());
 
@@ -24,11 +29,11 @@ fn impl_builder(input: &DeriveInput) -> TokenStream {
     let field_ident = field_idents(fields);
     let field_type = field_types(fields);
 
-    let builder_method = builder_methods(fields);
+    let builder_method = builder_methods(fields)?;
     let check_builder_field = check_builder_field(fields);
     let build_method_return = build_method_return(fields);
 
-    quote!(
+    Ok(quote!(
         pub struct #builder_name {
             #(#field_ident: Option<#field_type>),*
         }
@@ -55,7 +60,7 @@ fn impl_builder(input: &DeriveInput) -> TokenStream {
             }
         }
     )
-    .into()
+    .into())
 }
 
 fn field_idents(fields: &Fields) -> Vec<&Option<Ident>> {
@@ -69,55 +74,54 @@ fn field_types(fields: &Fields) -> Vec<&Type> {
     fields.iter().map(|field| &field.ty).collect::<Vec<&Type>>()
 }
 
-fn builder_methods(fields: &Fields) -> Vec<TokenStream2> {
-    fields
-        .iter()
-        .map(|field| {
-            let ident = &field.ident;
-            let (wrap_type, ident_type) = unwrap_type(field);
-            let attribute = unwrap_attribute(field);
+fn builder_methods(fields: &Fields) -> ResultTokenStream<Vec<TokenStream2>> {
+    let mut methods = Vec::with_capacity(fields.len());
+    for field in fields.iter() {
+        let ident = &field.ident;
+        let (wrap_type, ident_type) = unwrap_type(field);
+        let attribute = unwrap_attribute(field)?;
 
-            let mut each_name = quote!(#ident);
-            if let Some(ref new_each_name) = attribute {
-                each_name = quote!(#new_each_name);
+        let mut each_name = quote!(#ident);
+        if let Some(ref new_each_name) = attribute {
+            each_name = quote!(#new_each_name);
+        }
+
+        let set_value;
+        let mut new_ident_type = quote!(#ident_type);
+        match wrap_type {
+            WrapType::Option => {
+                set_value = quote!(
+                    self.#ident = Some(Some(#each_name));
+                );
             }
-
-            let set_value;
-            let mut new_ident_type = quote!(#ident_type);
-            match wrap_type {
-                WrapType::Option => {
+            WrapType::Vec => {
+                if attribute.is_some() {
                     set_value = quote!(
-                        self.#ident = Some(Some(#each_name));
+                        let _field = self.#ident.get_or_insert(Vec::new());
+                        _field.push(#each_name);
                     );
-                }
-                WrapType::Vec => {
-                    if attribute.is_some() {
-                        set_value = quote!(
-                            let _field = self.#ident.get_or_insert(Vec::new());
-                            _field.push(#each_name);
-                        );
-                    } else {
-                        set_value = quote!(
-                            self.#ident = Some(#each_name);
-                        );
-                        new_ident_type = quote!(Vec<#ident_type>);
-                    }
-                }
-                WrapType::Raw => {
+                } else {
                     set_value = quote!(
-                        self.#ident = Some(#ident);
+                        self.#ident = Some(#each_name);
                     );
+                    new_ident_type = quote!(Vec<#ident_type>);
                 }
             }
+            WrapType::Raw => {
+                set_value = quote!(
+                    self.#ident = Some(#ident);
+                );
+            }
+        }
 
-            quote!(
-                fn #each_name(&mut self, #each_name: #new_ident_type) -> &mut Self {
-                    #set_value
-                    self
-                }
-            )
-        })
-        .collect::<Vec<TokenStream2>>()
+        methods.push(quote!(
+            fn #each_name(&mut self, #each_name: #new_ident_type) -> &mut Self {
+                #set_value
+                self
+            }
+        ));
+    }
+    Ok(methods)
 }
 
 fn check_builder_field(fields: &Fields) -> Vec<TokenStream2> {
@@ -167,22 +171,37 @@ fn build_method_return(fields: &Fields) -> Vec<TokenStream2> {
         .collect::<Vec<TokenStream2>>()
 }
 
-fn unwrap_attribute(field: &Field) -> Option<Ident> {
+fn unwrap_attribute(field: &Field) -> ResultTokenStream<Option<TokenStream2>> {
     if let Some(attr) = field.attrs.last() {
         if attr.path.is_ident("builder") {
             if let Ok(Meta::List(MetaList { nested, .. })) = attr.parse_meta() {
                 if let Some(NestedMeta::Meta(Meta::NameValue(MetaNameValue {
+                    path: Path { segments, .. },
+                    eq_token,
                     lit: Lit::Str(lit_str),
                     ..
                 }))) = nested.last()
                 {
+                    if let Some(ident) = &segments.last() {
+                        if ident.ident != "each" {
+                            let span = attr
+                                .path
+                                .span()
+                                .join(ident.span())
+                                .and_then(|x| x.join(eq_token.span()))
+                                .and_then(|x| x.join(lit_str.span()))
+                                .unwrap_or(Span::call_site());
+                            let err = syn::Error::new(span, r#"expected `builder(each = "...")`"#);
+                            return Err(err.into_compile_error());
+                        }
+                    }
                     let ident = Ident::new(&lit_str.value(), lit_str.span());
-                    return Some(ident);
+                    return Ok(Some(quote!(#ident)));
                 }
             }
         }
     }
-    None
+    Ok(None)
 }
 
 enum WrapType {
