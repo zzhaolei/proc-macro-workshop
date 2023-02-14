@@ -35,13 +35,13 @@ fn impl_builder(input: &DeriveInput) -> ResultTokenStream<TokenStream> {
 
     Ok(quote!(
         pub struct #builder_name {
-            #(#field_ident: Option<#field_type>),*
+            #(#field_ident: std::option::Option<#field_type>),*
         }
 
         impl #struct_name {
             pub fn builder() -> #builder_name {
                 #builder_name {
-                    #(#field_ident: None,)*
+                    #(#field_ident: std::option::Option::None,)*
                 }
             }
         }
@@ -51,10 +51,10 @@ fn impl_builder(input: &DeriveInput) -> ResultTokenStream<TokenStream> {
         impl #builder_name {
             #(#builder_method)*
 
-            pub fn build(&mut self) -> Result<#struct_name, Box<dyn Error>> {
+            pub fn build(&mut self) -> std::result::Result<#struct_name, std::boxed::Box<dyn Error>> {
                 #(#check_builder_field)*
 
-                Ok(#struct_name {
+                std::result::Result::Ok(#struct_name {
                     #(#build_method_return),*
                 })
             }
@@ -91,25 +91,25 @@ fn builder_methods(fields: &Fields) -> ResultTokenStream<Vec<TokenStream2>> {
         match wrap_type {
             WrapType::Option => {
                 set_value = quote!(
-                    self.#ident = Some(Some(#each_name));
+                    self.#ident = std::option::Option::Some(std::option::Option::Some(#each_name));
                 );
             }
             WrapType::Vec => {
                 if attribute.is_some() {
                     set_value = quote!(
-                        let _field = self.#ident.get_or_insert(Vec::new());
+                        let _field = self.#ident.get_or_insert(std::vec::Vec::new());
                         _field.push(#each_name);
                     );
                 } else {
                     set_value = quote!(
-                        self.#ident = Some(#each_name);
+                        self.#ident = std::option::Option::Some(#each_name);
                     );
-                    new_ident_type = quote!(Vec<#ident_type>);
+                    new_ident_type = quote!(std::vec::Vec<#ident_type>);
                 }
             }
             WrapType::Raw => {
                 set_value = quote!(
-                    self.#ident = Some(#ident);
+                    self.#ident = std::option::Option::Some(#ident);
                 );
             }
         }
@@ -135,7 +135,7 @@ fn check_builder_field(fields: &Fields) -> Vec<TokenStream2> {
                 WrapType::Raw => {
                     quote!(
                         if self.#ident.is_none() {
-                            return Err(Box::<dyn Error>::from("the fields has been explicitly set"))
+                            return std::result::Result::Err(std::boxed::Box::<dyn std::error::Error>::from("the fields has been explicitly set"))
                         }
                     )
                 }
