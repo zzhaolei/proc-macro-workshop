@@ -3,8 +3,8 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
     parse_macro_input, spanned::Spanned, AngleBracketedGenericArguments, Data, DataStruct,
-    DeriveInput, Field, Fields, GenericArgument, Ident, Lit, Meta, MetaList, MetaNameValue,
-    NestedMeta, Path, PathArguments, Type, TypePath,
+    DeriveInput, Expr, ExprLit, Field, Fields, GenericArgument, Ident, Lit, MetaNameValue, Path,
+    PathArguments, Type, TypePath,
 };
 
 #[proc_macro_derive(Builder, attributes(builder))]
@@ -173,31 +173,29 @@ fn build_method_return(fields: &Fields) -> Vec<TokenStream2> {
 
 fn unwrap_attribute(field: &Field) -> ResultTokenStream<Option<TokenStream2>> {
     if let Some(attr) = field.attrs.last() {
-        if attr.path.is_ident("builder") {
-            if let Ok(Meta::List(MetaList { nested, .. })) = attr.parse_meta() {
-                if let Some(NestedMeta::Meta(Meta::NameValue(MetaNameValue {
-                    path: Path { segments, .. },
-                    eq_token,
-                    lit: Lit::Str(lit_str),
-                    ..
-                }))) = nested.last()
-                {
-                    if let Some(ident) = &segments.last() {
-                        if ident.ident != "each" {
-                            let span = attr
-                                .path
-                                .span()
-                                .join(ident.span())
-                                .and_then(|x| x.join(eq_token.span()))
-                                .and_then(|x| x.join(lit_str.span()))
-                                .unwrap_or(Span::call_site());
-                            let err = syn::Error::new(span, r#"expected `builder(each = "...")`"#);
-                            return Err(err.into_compile_error());
-                        }
-                    }
-                    let ident = Ident::new(&lit_str.value(), lit_str.span());
-                    return Ok(Some(quote!(#ident)));
+        if attr.path().is_ident("builder") {
+            if let Ok(MetaNameValue {
+                path,
+                eq_token,
+                value:
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Str(lit_str),
+                        ..
+                    }),
+            }) = attr.parse_args::<MetaNameValue>()
+            {
+                if !path.is_ident("each") {
+                    let span = attr
+                        .span()
+                        .join(path.span())
+                        .and_then(|x| x.join(eq_token.span()))
+                        .and_then(|x| x.join(lit_str.span()))
+                        .unwrap_or(Span::call_site());
+                    let err = syn::Error::new(span, r#"expected `builder(each = "...")`"#);
+                    return Err(err.into_compile_error());
                 }
+                let ident = Some(Ident::new(&lit_str.value(), lit_str.span()));
+                return Ok(Some(quote!(#ident)));
             }
         }
     }
