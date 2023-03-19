@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned, Data, DataStruct, DeriveInput, Field,
-    GenericParam, Generics, Lit, Meta, MetaNameValue,
+    parse_macro_input, parse_quote, spanned::Spanned, Data, DataStruct, DeriveInput, Expr, ExprLit,
+    Field, GenericParam, Generics, Lit, Meta, MetaNameValue,
 };
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -48,11 +48,15 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
 fn unwrap_attribute(field: &Field) -> TokenStream2 {
     if let Some(attr) = field.attrs.last() {
-        if attr.path.is_ident("debug") {
-            if let Ok(Meta::NameValue(MetaNameValue {
-                lit: Lit::Str(lit_str),
+        if attr.path().is_ident("debug") {
+            if let Meta::NameValue(MetaNameValue {
+                value:
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Str(lit_str),
+                        ..
+                    }),
                 ..
-            })) = attr.parse_meta()
+            }) = &attr.meta
             {
                 if let Some(ref ident) = field.ident {
                     let lit_str = lit_str.token();
