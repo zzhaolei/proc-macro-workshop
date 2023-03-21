@@ -2,8 +2,9 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned, Data, DataStruct, DeriveInput, Expr, ExprLit,
-    Field, GenericParam, Generics, Lit, Meta, MetaNameValue, Path, Type, TypePath,
+    parse_macro_input, parse_quote, spanned::Spanned, AngleBracketedGenericArguments, Data,
+    DataStruct, DeriveInput, Expr, ExprLit, Field, GenericArgument, GenericParam, Generics, Lit,
+    Meta, MetaNameValue, Path, PathArguments, PathSegment, Type, TypePath,
 };
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -85,9 +86,27 @@ fn add_trait_bound(fields: &syn::Fields, mut generics: Generics) -> Generics {
                         ..
                     }) = &field.ty
                     {
-                        if let Some(segment) = segments.last() {
-                            if segment.ident == ty_param.ident {
-                                return true;
+                        if let Some(PathSegment {
+                            ident,
+                            arguments:
+                                PathArguments::AngleBracketed(
+                                    AngleBracketedGenericArguments { args, .. },
+                                    ..,
+                                ),
+                        }) = segments.last()
+                        {
+                            if ident == "PhantomData" {
+                                if let Some(GenericArgument::Type(Type::Path(TypePath {
+                                    path: Path { segments, .. },
+                                    ..
+                                }))) = args.first()
+                                {
+                                    if let Some(segment) = segments.last() {
+                                        if segment.ident == ty_param.ident {
+                                            return true;
+                                        }
+                                    }
+                                }
                             }
                         }
                     };
@@ -96,8 +115,9 @@ fn add_trait_bound(fields: &syn::Fields, mut generics: Generics) -> Generics {
                 .count()
                 == 1
             {
-                ty_param.bounds.push(parse_quote!(std::fmt::Debug));
+                continue;
             }
+            ty_param.bounds.push(parse_quote!(std::fmt::Debug));
         }
     }
     generics
