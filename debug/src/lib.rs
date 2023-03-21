@@ -3,7 +3,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
     parse_macro_input, parse_quote, spanned::Spanned, Data, DataStruct, DeriveInput, Expr, ExprLit,
-    Field, GenericParam, Generics, Lit, Meta, MetaNameValue,
+    Field, GenericParam, Generics, Lit, Meta, MetaNameValue, Path, Type, TypePath,
 };
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -31,7 +31,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .map(unwrap_attribute)
         .collect::<Vec<TokenStream2>>();
 
-    let generics = add_trait_bound(input.generics);
+    let generics = add_trait_bound(fields, input.generics);
     let (impl_generic, type_generic, where_clause) = generics.split_for_impl();
 
     let expanded = quote!(
@@ -74,10 +74,30 @@ fn unwrap_attribute(field: &Field) -> TokenStream2 {
     }
 }
 
-fn add_trait_bound(mut generics: Generics) -> Generics {
+fn add_trait_bound(fields: &syn::Fields, mut generics: Generics) -> Generics {
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut ty_param) = *param {
-            ty_param.bounds.push(parse_quote!(std::fmt::Debug));
+            if fields
+                .iter()
+                .filter(|field| {
+                    if let Type::Path(TypePath {
+                        path: Path { segments, .. },
+                        ..
+                    }) = &field.ty
+                    {
+                        if let Some(segment) = segments.last() {
+                            if segment.ident == ty_param.ident {
+                                return true;
+                            }
+                        }
+                    };
+                    false
+                })
+                .count()
+                == 1
+            {
+                ty_param.bounds.push(parse_quote!(std::fmt::Debug));
+            }
         }
     }
     generics
